@@ -64,7 +64,11 @@ def has_text(page, texts: list[str]) -> bool:
 
 
 def open_app(playwright, config: dict, headless: bool):
-    browser = playwright.chromium.launch(headless=headless)
+    launch_options = {"headless": headless}
+    browser_channel = os.environ.get("WORKBUDDY_BROWSER_CHANNEL")
+    if browser_channel:
+        launch_options["channel"] = browser_channel
+    browser = playwright.chromium.launch(**launch_options)
     context_kwargs = {}
     if STATE_PATH.exists():
         context_kwargs["storage_state"] = str(STATE_PATH)

@@ -58,6 +58,8 @@ GitHub Actions 对小型个人任务通常够用；私有仓库会使用账户�
 py workbuddy_api_checkin.py
 ```
 
+首次登录默认使用 Playwright Chromium。Windows 如果下载 Chromium 较慢，也可以复用已安装的 Edge：`$env:WORKBUDDY_BROWSER_CHANNEL = "msedge"` 后再运行 `py workbuddy_checkin.py --setup`。
+
 `workbuddy_checkin.py` 是基于 Playwright 的本机浏览器方式，适合首次登录和导出会话；API 客户端会先检查今天是否已签到，执行后再复查状态。重复签到会直接跳过。登录失效或接口失败时，脚本以退出码 `1` 结束。
 
 目前 API 客户端使用 WorkBuddy 网页版的 `/billing/meter/checkin-activity-status` 和 `/billing/meter/daily-checkin` 接口。站点接口变化、账号权限或组织设置不同，都可能导致签到失败；请通过 Actions 运行日志查看结果。尚未使用你的账号验证真实签到。
