@@ -103,6 +103,9 @@ def setup_session(config: dict):
             visible_buttons = []
         print(f"当前页面: {page.url}")
         print(f"可见按钮: {visible_buttons or '未发现按钮'}")
+        if "/login" in page.url.lower():
+            browser.close()
+            raise RuntimeError("仍在登录页，未保存会话。请在此浏览器窗口完成登录后再按回车")
         if page.url != config.get("checkin_url"):
             config["checkin_url"] = page.url
             save_config(config)
