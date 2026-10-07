@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import time
-import threading
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
@@ -82,48 +81,53 @@ def open_app(playwright, config: dict, headless: bool):
 
 
 def setup_session(config: dict):
-    from workbuddy_api_checkin import CheckinError, account_headers
+    from workbuddy_api_checkin import CheckinError, account_headers_from_response
 
     with sync_playwright() as playwright:
         browser, context, page = open_app(playwright, config, headless=False)
         try:
-            while True:
-                print("请在新开的浏览器窗口登录。今天已签到也可以保存，无需寻找签到按钮。")
-                ready = threading.Event()
-                input_errors = []
-
-                def wait_for_enter():
+            page.bring_to_front()
+            print("请在刚打开的 Edge 窗口登录 WorkBuddy。无需签到，也无需按回车。", flush=True)
+            print("登录后会自动验证并保存，最多等待 10 分钟。请不要关闭浏览器。", flush=True)
+            deadline = time.monotonic() + 600
+            last_error = "尚未确认登录"
+            while time.monotonic() < deadline:
+                if not context.pages:
+                    raise RuntimeError("登录窗口已关闭，未保存会话。请重新启动登录工具")
+                for endpoint in ("/console/account", "/console/accounts"):
+                    response = None
                     try:
-                        input("登录完成后，回到此终端按回车保存登录状态... ")
-                    except EOFError as exc:
-                        input_errors.append(exc)
+                        # This request shares the browser cookie jar, including
+                        # cookies refreshed during authentication redirects.
+                        response = context.request.get(
+                            "https://www.workbuddy.cn" + endpoint,
+                            headers={"Accept": "application/json"}, timeout=5000,
+                        )
+                        if response.status != 200:
+                            last_error = f"账户接口 HTTP {response.status}"
+                            continue
+                        if "json" not in response.headers.get("content-type", "").lower():
+                            last_error = "账户接口仍返回登录页面"
+                            continue
+                        result = response.json()
+                        state = context.storage_state()
+                        headers = account_headers_from_response(result, state)
+                        if not headers.get("X-User-Id"):
+                            raise CheckinError("账户接口未返回用户标识")
+                        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+                        temporary = STATE_PATH.with_name(STATE_PATH.name + ".tmp")
+                        temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+                        temporary.replace(STATE_PATH)
+                        print(f"登录验证通过，登录状态已保存到 {STATE_PATH}", flush=True)
+                        return
+                    except (CheckinError, PlaywrightError, ValueError) as exc:
+                        last_error = "登录验证尚未通过，请确认浏览器已完成登录"
                     finally:
-                        ready.set()
-
-                threading.Thread(target=wait_for_enter, daemon=True).start()
-                # Keep Playwright processing navigation and new-tab events while
-                # the user is logging in; input() on this thread would block it.
-                while not ready.is_set():
-                    if not context.pages:
-                        raise RuntimeError("登录窗口已关闭，请重新运行 --setup")
-                    context.pages[-1].wait_for_timeout(200)
-                if input_errors:
-                    raise RuntimeError("请在可交互的 PowerShell 终端运行 --setup")
-
-                state = context.storage_state()
-                try:
-                    headers = account_headers(state)
-                    if not headers.get("X-User-Id"):
-                        raise CheckinError("账户接口未返回用户标识，暂时无法确认登录成功")
-                except CheckinError as exc:
-                    print(f"尚未验证登录状态：{exc}")
-                    print("窗口保持打开，请完成登录后再按回车。")
-                    continue
-
-                ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-                STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-                print(f"登录验证通过，登录状态已保存到 {STATE_PATH}")
-                return
+                        if response is not None:
+                            response.dispose()
+                if context.pages:
+                    context.pages[-1].wait_for_timeout(3000)
+            raise RuntimeError(f"等待登录超时：{last_error}。请保留终端提示以便排查")
         finally:
             browser.close()
 

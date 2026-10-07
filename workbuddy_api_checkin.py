@@ -22,6 +22,10 @@ class CheckinError(RuntimeError):
     pass
 
 
+class AccountEndpointError(CheckinError):
+    """Authentication or route errors for which another account endpoint may work."""
+
+
 def load_state() -> dict:
     try:
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -85,47 +89,97 @@ def request_json(state: dict, path: str, method: str = "GET", body: dict | None 
             raw = response.read().decode("utf-8", errors="replace")
             status = response.status
     except HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        if exc.code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-            raise CheckinError("WorkBuddy 登录状态已失效，请重新运行 --setup 并复制新的 state 文件") from exc
-        raise CheckinError(f"WorkBuddy API HTTP {exc.code}: {raw[:300]}") from exc
+        if exc.code in (301, 302, 303, 307, 308, 401, 403, 404, 405):
+            raise AccountEndpointError(f"WorkBuddy API HTTP {exc.code}，请检查登录状态或接口路径") from exc
+        raise CheckinError(f"WorkBuddy API HTTP {exc.code}") from exc
     except URLError as exc:
         raise CheckinError(f"无法连接 WorkBuddy: {exc.reason}") from exc
     if status != HTTPStatus.OK:
-        raise CheckinError(f"WorkBuddy API HTTP {status}: {raw[:300]}")
+        raise CheckinError(f"WorkBuddy API HTTP {status}")
     try:
         result = json.loads(raw)
     except json.JSONDecodeError as exc:
         if raw.lstrip().startswith("<"):
-            raise CheckinError("WorkBuddy 登录状态已失效，请重新运行 --setup 并复制新的 state 文件") from exc
-        raise CheckinError(f"WorkBuddy 返回的不是 JSON: {raw[:300]}") from exc
-    if isinstance(result, dict) and result.get("code") not in (None, 0, "0", 1001, "1001"):
-        message = result.get("msg") or result.get("message") or "API 返回失败"
-        raise CheckinError(f"WorkBuddy API 失败 ({result.get('code')}): {message}")
+            raise AccountEndpointError("WorkBuddy 未返回账户 JSON，请重新运行 --setup 并复制新的 state 文件") from exc
+        raise CheckinError("WorkBuddy 返回的不是 JSON") from exc
+    allowed_codes = (0, "0", 1001, "1001") if path == CHECKIN_PATH else (0, "0")
+    if not isinstance(result, dict) or result.get("code") not in allowed_codes:
+        raise CheckinError("WorkBuddy API 返回业务失败或缺少成功状态码")
     return result
 
 
-def account_headers(state: dict) -> dict:
-    account = request_json(state, "/console/accounts")
-    uid = find_value(account, {"uid", "userid", "user_id", "userid"})
-    headers = {}
-    if uid is not None:
-        headers["X-User-Id"] = str(uid)
-    enterprise = find_value(account, {"enterpriseid", "enterprise_id"})
-    tenant = find_value(account, {"tenantid", "tenant_id"})
-    if enterprise is not None:
+def account_headers_from_response(result: dict, state: dict) -> dict:
+    if not isinstance(result, dict) or result.get("code") not in (0, "0"):
+        raise CheckinError("账户接口未返回成功状态")
+    data = result.get("data")
+    if not isinstance(data, dict):
+        raise CheckinError("账户接口缺少 data")
+    accounts = data.get("accounts") if "accounts" in data else [data]
+    if not isinstance(accounts, list) or not accounts:
+        raise CheckinError("账户接口没有可用账户")
+    if any(not isinstance(account, dict) or not isinstance(account.get("uid"), str)
+           or not account["uid"].strip() for account in accounts):
+        raise CheckinError("账户接口含无效账户或缺少 uid")
+    selected_ids = {
+        item.get("value")
+        for origin in state.get("origins", [])
+        if origin.get("origin", "").rstrip("/") == BASE_URL
+        for item in origin.get("localStorage", [])
+        if item.get("name") == "CODEBUDDY_IDE_SELECTED_ACCOUNT_ID" and item.get("value")
+    }
+    if len(selected_ids) > 1:
+        raise CheckinError("保存的账户选择存在歧义，请重新登录并选择账户")
+    selected = next(iter(selected_ids), None)
+    matches = [a for a in accounts if selected == (
+        a["uid"] if a.get("type", "personal") == "personal" else a.get("enterpriseId"))] if selected else []
+    if len(matches) == 1:
+        account = matches[0]
+    elif selected and not matches and len(accounts) > 1:
+        raise CheckinError("保存的账户选择已不可用，请重新选择账户")
+    elif len(matches) > 1:
+        raise CheckinError("账户选择存在歧义，请重新选择账户")
+    elif len(accounts) == 1:
+        account = accounts[0]
+    else:
+        personal = [a for a in accounts if a.get("type", "personal") == "personal"]
+        if len(personal) != 1:
+            raise CheckinError("存在多个账户，请先在网页选择签到账户后重新导出登录状态")
+        account = personal[0]
+    headers = {"X-User-Id": account["uid"]}
+    enterprise = account.get("enterpriseId")
+    if account.get("type", "personal") != "personal" and not enterprise:
+        raise CheckinError("企业账户缺少 enterpriseId")
+    if enterprise:
         headers["X-Enterprise-Id"] = str(enterprise)
         headers["X-Tenant-Id"] = str(enterprise)
-    elif tenant is not None:
-        headers["X-Tenant-Id"] = str(tenant)
     return headers
+
+
+def account_headers(state: dict) -> dict:
+    for index, path in enumerate(("/console/account", "/console/accounts")):
+        try:
+            result = request_json(state, path)
+        except AccountEndpointError:
+            if index == 0:
+                continue
+            raise
+        return account_headers_from_response(result, state)
+    raise CheckinError("无法获取账户")
 
 
 def today_checked_in(status: dict) -> bool:
     found = find_value(status, {"today_checked_in", "todaycheckedin"})
+    if found is None:
+        raise CheckinError("签到状态缺少 today_checked_in，已停止，未继续提交签到")
     if isinstance(found, str):
-        return found.strip().lower() in {"1", "true", "yes", "y"}
-    return bool(found)
+        normalized = found.strip().lower()
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+        if normalized in {"0", "false", "no", "n"}:
+            return False
+    elif isinstance(found, bool) or isinstance(found, int) and found in (0, 1):
+        return bool(found)
+    raise CheckinError("签到状态 today_checked_in 类型无效，已停止")
 
 
 def main() -> int:
@@ -137,12 +191,12 @@ def main() -> int:
             print("今天已经签到，无需重复操作。")
             return 0
         result = request_json(state, CHECKIN_PATH, "POST", {}, headers)
-        if isinstance(result, dict) and result.get("code") in (1001, "1001"):
-            print("今天已经签到，无需重复操作。")
-            return 0
         verified = request_json(state, STATUS_PATH, "POST", {}, headers)
         if not today_checked_in(verified):
-            raise CheckinError(f"签到请求已返回，但复查状态仍未显示成功: {json.dumps(result, ensure_ascii=False)}")
+            raise CheckinError("签到请求已返回，但复查状态仍未显示成功")
+        if result.get("code") in (1001, "1001"):
+            print("已复查确认今天已经签到。")
+            return 0
         streak = find_value(verified, {"streak_days", "streakdays"})
         credit = find_value(result, {"credit", "daily_credit", "dailycredit"})
         print(f"签到成功。连续签到: {streak if streak is not None else '-'} 天，今日积分: {credit if credit is not None else '-'}")

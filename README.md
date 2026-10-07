@@ -14,7 +14,7 @@ py -m playwright install chromium
 py workbuddy_checkin.py --setup
 ```
 
-浏览器打开后登录 WorkBuddy，并进入登录后的页面；回到终端按回车保存。项目目录会生成 `playwright_state.json`。它包含登录 Cookie，等同于登录凭证，不能提交到仓库、发送给他人或粘贴到 issue。
+Windows 可以直接双击 `login-workbuddy.cmd`，它会用 Edge 打开登录窗口。浏览器打开后登录 WorkBuddy；程序自动验证账户并保存，无需寻找签到按钮或回终端按回车。最多等待 10 分钟，成功后项目目录会生成 `playwright_state.json`。它包含登录 Cookie，等同于登录凭证，不能提交到仓库、发送给他人或粘贴到 issue。
 
 ### 2. 建立 GitHub 仓库并上传代码
 
