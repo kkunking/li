@@ -1,0 +1,6 @@
+data/
+playwright_state.json
+workbuddy_checkin_error.png
+__pycache__/
+*.pyc
+

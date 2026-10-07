@@ -1,0 +1,40 @@
+name: WorkBuddy 自动签到
+
+on:
+  schedule:
+    # GitHub Actions 使用 UTC；北京时间每天 09:00 = UTC 01:00。
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: 写入 WorkBuddy 登录状态
+        shell: bash
+        env:
+          WORKBUDDY_STATE_JSON: ${{ secrets.WORKBUDDY_STATE_JSON }}
+        run: |
+          test -n "$WORKBUDDY_STATE_JSON" || {
+            echo "未配置 WORKBUDDY_STATE_JSON Secret。" >&2
+            exit 1
+          }
+          mkdir -p data
+          printf '%s' "$WORKBUDDY_STATE_JSON" > data/playwright_state.json
+
+      - name: 执行签到
+        env:
+          WORKBUDDY_STATE_PATH: data/playwright_state.json
+        run: python workbuddy_api_checkin.py

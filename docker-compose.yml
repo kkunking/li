@@ -1,0 +1,9 @@
+services:
+  workbuddy-checkin:
+    build: .
+    environment:
+      TZ: Asia/Shanghai
+      WORKBUDDY_STATE_PATH: /data/playwright_state.json
+      WORKBUDDY_BASE_URL: https://www.workbuddy.cn
+    volumes:
+      - ./data:/data
