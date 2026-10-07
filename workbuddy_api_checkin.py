@@ -5,9 +5,11 @@ import os
 import sys
 import time
 from http import HTTPStatus
+from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import Request, build_opener, HTTPCookieProcessor, HTTPRedirectHandler
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +26,46 @@ class CheckinError(RuntimeError):
 
 class AccountEndpointError(CheckinError):
     """Authentication or route errors for which another account endpoint may work."""
+
+
+class SameOriginRedirectHandler(HTTPRedirectHandler):
+    max_redirections = 10
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target, source = urlsplit(newurl), urlsplit(BASE_URL)
+        if (target.scheme, target.hostname, target.port) != (source.scheme, source.hostname, source.port):
+            raise AccountEndpointError("登录跳转离开 WorkBuddy，请重新导出登录状态")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_CLIENT_STATE = None
+_CLIENT_OPENER = None
+
+
+def session_opener(state: dict):
+    global _CLIENT_STATE, _CLIENT_OPENER
+    if _CLIENT_STATE is state and _CLIENT_OPENER is not None:
+        return _CLIENT_OPENER
+    jar = CookieJar()
+    host = urlsplit(BASE_URL).hostname or ""
+    for item in state.get("cookies", []):
+        domain = item.get("domain", "")
+        clean_domain = domain.lstrip(".")
+        if not clean_domain or not (host == clean_domain or domain.startswith(".") and host.endswith("." + clean_domain)):
+            continue
+        expiry = item.get("expires", -1)
+        expiry = int(expiry) if isinstance(expiry, (int, float)) and expiry >= 0 else None
+        if expiry is not None and expiry <= time.time():
+            continue
+        jar.set_cookie(Cookie(
+            0, item["name"], item["value"], None, False,
+            domain, domain.startswith("."), domain.startswith("."),
+            item.get("path", "/"), True, item.get("secure", False),
+            expiry, expiry is None, None, None, {}, False,
+        ))
+    _CLIENT_STATE = state
+    _CLIENT_OPENER = build_opener(HTTPCookieProcessor(jar), SameOriginRedirectHandler())
+    return _CLIENT_OPENER
 
 
 def load_state() -> dict:
@@ -75,7 +117,6 @@ def request_json(state: dict, path: str, method: str = "GET", body: dict | None 
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "Cookie": cookie_header(state),
         "Origin": BASE_URL,
         "Referer": f"{BASE_URL}/app",
         "User-Agent": "workbuddy-checkin/1.0",
@@ -85,7 +126,7 @@ def request_json(state: dict, path: str, method: str = "GET", body: dict | None 
     payload = None if body is None else json.dumps(body).encode("utf-8")
     request = Request(f"{BASE_URL}{path}", data=payload, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=30) as response:
+        with session_opener(state).open(request, timeout=30) as response:
             raw = response.read().decode("utf-8", errors="replace")
             status = response.status
     except HTTPError as exc:
@@ -131,7 +172,7 @@ def account_headers_from_response(result: dict, state: dict) -> dict:
         raise CheckinError("保存的账户选择存在歧义，请重新登录并选择账户")
     selected = next(iter(selected_ids), None)
     matches = [a for a in accounts if selected == (
-        a["uid"] if a.get("type", "personal") == "personal" else a.get("enterpriseId"))] if selected else []
+        a["uid"] if (a.get("type") or "personal") == "personal" else a.get("enterpriseId"))] if selected else []
     if len(matches) == 1:
         account = matches[0]
     elif selected and not matches and len(accounts) > 1:
@@ -141,13 +182,13 @@ def account_headers_from_response(result: dict, state: dict) -> dict:
     elif len(accounts) == 1:
         account = accounts[0]
     else:
-        personal = [a for a in accounts if a.get("type", "personal") == "personal"]
+        personal = [a for a in accounts if (a.get("type") or "personal") == "personal"]
         if len(personal) != 1:
             raise CheckinError("存在多个账户，请先在网页选择签到账户后重新导出登录状态")
         account = personal[0]
     headers = {"X-User-Id": account["uid"]}
     enterprise = account.get("enterpriseId")
-    if account.get("type", "personal") != "personal" and not enterprise:
+    if (account.get("type") or "personal") != "personal" and not enterprise:
         raise CheckinError("企业账户缺少 enterpriseId")
     if enterprise:
         headers["X-Enterprise-Id"] = str(enterprise)
