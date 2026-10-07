@@ -85,6 +85,10 @@ def setup_session(config: dict):
         browser, context, page = open_app(playwright, config, headless=False)
         print("浏览器已打开。请完成 WorkBuddy 登录，并进入可看到签到按钮的页面。")
         input("完成后回到此终端按回车保存登录状态... ")
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=5_000)
+        except PlaywrightTimeoutError:
+            pass
         if "/login" in page.url.lower():
             browser.close()
             raise RuntimeError("仍在登录页，未保存会话。请完成登录后重新运行 --setup")

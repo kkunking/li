@@ -1,7 +1,17 @@
 {
   "base_url": "https://www.workbuddy.cn/",
   "checkin_url": "https://www.workbuddy.cn/app",
-  "checkin_texts": ["签到", "每日签到", "Check in", "Check-in"],
-  "success_texts": ["签到成功", "已签到", "Check-in successful", "Checked in"],
+  "checkin_texts": [
+    "签到",
+    "每日签到",
+    "Check in",
+    "Check-in"
+  ],
+  "success_texts": [
+    "签到成功",
+    "已签到",
+    "Check-in successful",
+    "Checked in"
+  ],
   "timeout_seconds": 20
 }
