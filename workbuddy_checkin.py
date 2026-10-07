@@ -88,11 +88,15 @@ def setup_session(config: dict):
         if "/login" in page.url.lower():
             browser.close()
             raise RuntimeError("仍在登录页，未保存会话。请完成登录后重新运行 --setup")
-        visible_buttons = [
-            text.strip()
-            for text in page.locator("button:visible").all_inner_texts()
-            if text.strip()
-        ]
+        try:
+            visible_buttons = [
+                text.strip()
+                for text in page.locator("button:visible").all_inner_texts()
+                if text.strip()
+            ]
+        except PlaywrightError:
+            # WorkBuddy may still be completing a client-side navigation after login.
+            visible_buttons = []
         print(f"当前页面: {page.url}")
         print(f"可见按钮: {visible_buttons or '未发现按钮'}")
         if page.url != config.get("checkin_url"):
