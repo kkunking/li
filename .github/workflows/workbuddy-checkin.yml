@@ -2,12 +2,16 @@ name: WorkBuddy 自动签到
 
 on:
   schedule:
-    # GitHub Actions 使用 UTC；北京时间每天 09:00 = UTC 01:00。
-    - cron: "0 1 * * *"
+    # UTC；北京时间 09:17、10:17、12:17、18:17，多次触发补签。
+    - cron: "17 1,2,4,10 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: workbuddy-checkin
+  cancel-in-progress: false
 
 jobs:
   checkin:

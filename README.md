@@ -42,7 +42,7 @@ git push -u origin main
 
 ### 4. 手动测试并启用定时运行
 
-打开仓库的 **Actions → WorkBuddy 自动签到 → Run workflow**，手动执行一次并查看运行日志。工作流也会每天北京时间 **09:00** 自动运行（GitHub cron 使用 UTC，所以设为 `01:00`）。GitHub 的定时启动可能延迟几分钟，且只在默认分支上运行；请确认仓库已启用 Actions。
+打开仓库的 **Actions → WorkBuddy 自动签到 → Run workflow**，手动执行一次并查看运行日志。工作流每天北京时间 **09:17、10:17、12:17、18:17** 安排四次运行，已签到时直接跳过，后续运行用于补签。GitHub cron 使用 UTC，对应 `17 1,2,4,10 * * *`。定时任务可能延迟数小时或被丢弃，多次触发可以降低漏签概率，但不保证准点执行。定时任务只在默认分支上运行；请确认仓库已启用 Actions。
 
 GitHub Actions 对小型个人任务通常够用；私有仓库会使用账户的 Actions 分钟额度，可在 GitHub 计费页面查看剩余额度。
 
@@ -62,4 +62,4 @@ py workbuddy_api_checkin.py
 
 `workbuddy_checkin.py` 是基于 Playwright 的本机浏览器方式，适合首次登录和导出会话；API 客户端会先检查今天是否已签到，执行后再复查状态。重复签到会直接跳过。登录失效或接口失败时，脚本以退出码 `1` 结束。
 
-目前 API 客户端使用 WorkBuddy 网页版的 `/billing/meter/checkin-activity-status` 和 `/billing/meter/daily-checkin` 接口。站点接口变化、账号权限或组织设置不同，都可能导致签到失败；请通过 Actions 运行日志查看结果。尚未使用你的账号验证真实签到。
+目前 API 客户端使用 WorkBuddy 网页版的 `/billing/meter/checkin-activity-status` 和 `/billing/meter/daily-checkin` 接口。已通过真实账户签到和状态复查验证。站点接口变化、账号权限或组织设置不同，都可能导致签到失败；请通过 Actions 运行日志查看结果。
